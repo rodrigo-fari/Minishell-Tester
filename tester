@@ -113,11 +113,21 @@ for testfile in ${test_lists[*]}; do
 		# Executa o teste na minishell e limpa o output
 		MINI_OUTPUT=$(echo -e "$teste" | $MINISHELL_PATH 2> /dev/null | $REMOVE_COLORS | grep -vF "$PROMPT" | $REMOVE_EXIT)
 
-		# Executa o teste com Valgrind e adiciona ao arquivo de output
-		echo "=== TESTE $i ===" >> "$VALGRIND_OUTPUT"
-		echo "Comando: $teste" >> "$VALGRIND_OUTPUT"
-		echo -e "$teste\nexit" | $VALGRIND $MINISHELL_PATH 2>> "$VALGRIND_OUTPUT" >/dev/null
-		for j in {1..5}; do echo "" >> "$VALGRIND_OUTPUT"; done
+		# Executa o teste com Valgrind e guarda num ficheiro temporário
+		TMP_VALGRIND_OUTPUT=$(mktemp)
+		echo -e "$teste\nexit" | $VALGRIND $MINISHELL_PATH 2> "$TMP_VALGRIND_OUTPUT" > /dev/null
+
+		# Verifica se existem leaks reais (definitely, indirectly, possibly lost != 0)
+		if grep -E "definitely lost: [^0]|indirectly lost: [^0]|possibly lost: [^0]" "$TMP_VALGRIND_OUTPUT" > /dev/null; then
+			echo "=== TESTE $i ===" >> "$VALGRIND_OUTPUT"
+			echo "Comando: $teste" >> "$VALGRIND_OUTPUT"
+			cat "$TMP_VALGRIND_OUTPUT" >> "$VALGRIND_OUTPUT"
+			for j in {1..5}; do echo "" >> "$VALGRIND_OUTPUT"; done
+		fi
+
+		# Remove ficheiro temporário
+		rm -f "$TMP_VALGRIND_OUTPUT"
+
 
 		# Limpa diretórios
 		rm -rf ./outfiles/*
