@@ -12,7 +12,6 @@ if [[ $1 ]]; then
 		$1
 	)
 else
-	# Caso contrário, define uma lista de ficheiros de testes a correr por padrão
 	test_lists=(
 		"builtins"
 		"pipes"
@@ -26,7 +25,7 @@ if [[ $1 == "wildcards"  || $1 == "bonus" ]]; then
 	MINISHELL_PATH="../minishell_bonus"
 fi
 
-# Códigos de cores ANSI para formatação do output no terminal
+# Códigos de cores ANSI
 BOLD="\e[1m"
 YELLOW="\033[0;33m"
 GREY="\033[38;5;244m"
@@ -37,97 +36,77 @@ END="\033[0m"
 BOLD="\033[1m"
 BLINK="\033[5m"
 RESET="\033[0m"
+GREEN="\033[0;32m"
 
-# Cria uma situação de erro ao remover permissões de leitura para um ficheiro de teste
 chmod 000 ./test_files/invalid_permission
 
-# Cria diretórios temporários para armazenar os ficheiros gerados pelos testes
 mkdir -p ./outfiles
 mkdir -p ./mini_outfiles
 mkdir -p ./bash_outfiles
 
-# Limpa o arquivo de output do Valgrind
 > "$VALGRIND_OUTPUT"
 
 clear
 
-# Captura o prompt da minishell para poder removê-lo do output posteriormente
 PROMPT=$(echo -e "\nexit\n" | $MINISHELL_PATH | head -n 1 | sed "s/\x1B\[[0-9;]\{1,\}[A-Za-z]//g")
 
-# Comandos auxiliares para limpar o output:
-REMOVE_COLORS="sed s/\x1B\[[0-9;]\{1,\}[A-Za-z]//g"  # remove códigos de cor ANSI
-REMOVE_EXIT="grep -v ^exit$"  # remove linhas que contêm só "exit"
+REMOVE_COLORS="sed s/\x1B\[[0-9;]\{1,\}[A-Za-z]//g"
+REMOVE_EXIT="grep -v ^exit$"
 
-# Loop por cada ficheiro de testes na lista
+i=0
+ok=0
+
 for testfile in ${test_lists[*]}; do
 
 	printf "\n"
-	printf $RED
-	echo ══════════════════════╣ $testfile ╠══════════════════════
+	echo ══════════════════════╣ Testing: $testfile ╠══════════════════════
 
-	# Lê cada linha (teste) do ficheiro
 	while read teste; do
-		((i++)) # contador de testes
+		((i++))
 
-		# Limpa diretórios temporários
 		rm -rf ./outfiles/*
 		rm -rf ./mini_outfiles/*
 
-		# Executa o teste na minishell e limpa o output
 		MINI_OUTPUT=$(echo -e "$teste" | $MINISHELL_PATH 2> /dev/null | $REMOVE_COLORS | grep -vF "$PROMPT" | $REMOVE_EXIT)
-
-		# Copia os ficheiros criados pela minishell
 		MINI_OUTFILES=$(cp ./outfiles/* ./mini_outfiles &>/dev/null)
-
-		# Captura o código de saída da minishell para o comando
 		MINI_EXIT_CODE=$(echo -e "$MINISHELL_PATH\n$teste\necho \$?\nexit\n" | bash 2> /dev/null | $REMOVE_COLORS | grep -vF "$PROMPT" | $REMOVE_EXIT | tail -n 1)
-
-		# Captura a mensagem de erro, se existir, da minishell
 		MINI_ERROR_MSG=$(trap "" PIPE && echo "$teste" | $MINISHELL_PATH 2>&1 > /dev/null | grep -o '[^:]*$')
 
-		# Executa o teste na minishell e limpa o output
 		MINI_OUTPUT=$(echo -e "$teste" | $MINISHELL_PATH 2> /dev/null | $REMOVE_COLORS | grep -vF "$PROMPT" | $REMOVE_EXIT)
 
-		# Executa o teste com Valgrind e guarda num ficheiro temporário
 		TMP_VALGRIND_OUTPUT=$(mktemp)
 		echo -e "$teste\nexit" | $VALGRIND $MINISHELL_PATH 2> "$TMP_VALGRIND_OUTPUT" > /dev/null
 
-		# Verifica se existem leaks reais (definitely, indirectly, possibly lost != 0)
-		if grep -E " " "$TMP_VALGRIND_OUTPUT" > /dev/null; then
+		# Verifica leaks e escreve saída apropriada no VALGRIND_OUTPUT
+		if grep -E "definitely lost: [^0]" "$TMP_VALGRIND_OUTPUT" > /dev/null || \
+			grep -E "indirectly lost: [^0]" "$TMP_VALGRIND_OUTPUT" > /dev/null || \
+			grep -E "possibly lost: [^0]" "$TMP_VALGRIND_OUTPUT" > /dev/null; then
 			echo "=== TESTE $i ===" >> "$VALGRIND_OUTPUT"
 			echo "Comando: $teste" >> "$VALGRIND_OUTPUT"
 			cat "$TMP_VALGRIND_OUTPUT" >> "$VALGRIND_OUTPUT"
-			for j in {1..5}; do echo "" >> "$VALGRIND_OUTPUT"; done
+		else
+			echo "=== TESTE $i === [OK]" >> "$VALGRIND_OUTPUT"
 		fi
+		for j in {1..5}; do echo "" >> "$VALGRIND_OUTPUT"; done
 
-		# Remove ficheiro temporário
 		rm -f "$TMP_VALGRIND_OUTPUT"
 
-
-		# Limpa diretórios
 		rm -rf ./outfiles/*
 		rm -rf ./bash_outfiles/*
 
-		# Executa o mesmo teste no bash
 		BASH_OUTPUT=$(echo -e "$teste" | bash 2> /dev/null)
 		BASH_EXIT_CODE=$(echo $?)
 		BASH_OUTFILES=$(cp ./outfiles/* ./bash_outfiles &>/dev/null)
 		BASH_ERROR_MSG=$(trap "" PIPE && echo "$teste" | bash 2>&1 > /dev/null | grep -o '[^:]*$' | head -n1)
-
-		# Verifica se os ficheiros de saída são diferentes
 		OUTFILES_DIFF=$(diff --brief ./mini_outfiles ./bash_outfiles)
 
-		# Mostra o número do teste
 		printf "\n"
 		printf $YELLOW
 		printf "[$i]: "
 
-		# Verifica se o output, código de saída e ficheiros são iguais entre minishell e bash
 		if [[ "$MINI_OUTPUT" == "$BASH_OUTPUT" && "$MINI_EXIT_CODE" == "$BASH_EXIT_CODE" && -z "$OUTFILES_DIFF" ]]; then
 			printf ✅
-			((ok++)) # contador de testes com sucesso
-
-			# Se as mensagens de erro forem diferentes, mostra um aviso
+			((ok++))
 			if [ "$MINI_ERROR_MSG" != "$BASH_ERROR_MSG" ]; then
 				printf "${BOLD}${YELLOW}[Different Message]${RESET}"
 			fi
@@ -135,10 +114,8 @@ for testfile in ${test_lists[*]}; do
 			printf "${RED}${BOLD}[ERRO]${RESET}"
 		fi
 
-		# Mostra o comando do teste em cinzento
 		printf "$GREY $teste \n$END"
 
-		# Mostra detalhes caso haja diferenças
 		if [ "$OUTFILES_DIFF" ]; then
 			echo "$OUTFILES_DIFF"
 			echo mini outfiles:
@@ -163,12 +140,9 @@ done
 
 chmod 666 ./test_files/invalid_permission
 
-# Remove os diretórios temporários
 rm -rf ./outfiles
 rm -rf ./mini_outfiles
-# rm -rf ./bash_outfiles
 
-# Emoji de sucesso ou falha
 if [[ "$ok" == "$i" ]]; then
 	printf "\n"
 	printf "${GREEN}${BOLD}${BLINK}[ALL DONE! Finally! *-*]${RESET}"
